@@ -11,6 +11,12 @@ export default tseslint.config(
     rules: {
       // CLAUDE.md style rule: no `any` without an explanatory eslint-disable comment.
       '@typescript-eslint/no-explicit-any': 'error',
+      // Convention: a leading underscore marks a deliberately unused parameter
+      // (e.g. stub signatures for human-owned modules).
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
     },
   },
 );
