@@ -23,7 +23,7 @@ export function money(amountCents: number, currency: CurrencyCode): Money {
 
 /**
  * Sum two Money values of the same currency.
- * Throws CurrencyMismatchError if the currencies differ.
+* Throws CurrencyMismatchError if the currencies differ.
  */
 export function addMoney(a: Money, b: Money): Money {
     if (a.currency !== b.currency) {

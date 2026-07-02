@@ -19,7 +19,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const token = env.WHATSAPP_TOKEN;
   const phoneNumberId = env.WHATSAPP_PHONE_NUMBER_ID;
-  const to = env.WHATSAPP_TO;
+  const to = env.WHATSAPP_TO;  
 
   if (token && phoneNumberId && to) {
     return { timeZone, whatsapp: { token, phoneNumberId, to } };

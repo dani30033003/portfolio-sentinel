@@ -17,7 +17,7 @@ export class WhatsAppAdapter implements MessagingPort {
   private readonly url: string;
 
   constructor(private readonly config: WhatsAppConfig) {
-    const version = config.apiVersion ?? 'v23.0';
+    const version = config.apiVersion ?? 'v25.0';
     this.url = `https://graph.facebook.com/${version}/${config.phoneNumberId}/messages`;
   }
 
