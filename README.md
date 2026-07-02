@@ -3,11 +3,6 @@
 An always-on personal service: Interactive Brokers (paper account) → hexagonal domain core →
 LLM-written summaries/alerts/answers → WhatsApp.
 
-## Status
-
-**Phase 0 — walking skeleton.** Paper broker with fixture data, deterministic (no-LLM) summary,
-WhatsApp outbound send with console dry-run fallback. No webhook, scheduler, LLM, or storage yet.
-
 ## Setup
 
 ```sh
