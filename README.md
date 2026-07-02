@@ -1,8 +1,7 @@
 # Portfolio Sentinel
 
 An always-on personal service: Interactive Brokers (paper account) → hexagonal domain core →
-Claude-written summaries/alerts/answers → WhatsApp. See `PROJECT_SPEC.md` for the full spec and
-`CLAUDE.md` for working rules.
+LLM-written summaries/alerts/answers → WhatsApp.
 
 ## Status
 
