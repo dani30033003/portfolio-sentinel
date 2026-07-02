@@ -1,12 +1,9 @@
-/**
- * NOTE: skipped until money-math.ts (human-owned) is implemented — SummaryService
- * formats every figure through those utilities. Unskip together with
- * tests/unit/money-math.test.ts.
- */
 import { describe, expect, it } from 'vitest';
 import { SummaryService } from '../../src/domain/services/summary-service.js';
 import type { BrokerPort } from '../../src/domain/ports/broker-port.js';
 import type { ClockPort } from '../../src/domain/ports/clock-port.js';
+import type { LLMPort } from '../../src/domain/ports/llm-port.js';
+import { LlmError } from '../../src/domain/errors.js';
 
 const usd = (amountCents: number) => ({ amountCents, currency: 'USD' });
 
@@ -59,5 +56,69 @@ describe('SummaryService.buildSnapshotSummary', () => {
     const text = await service.buildSnapshotSummary();
     expect(text).toContain('2 Jul 2026');
     expect(text).toContain('15:05'); // 12:05 UTC shown as Jerusalem local time
+  });
+});
+
+describe('SummaryService.buildSummary — LLM path and fallback (hard rule 6)', () => {
+  const llmOf = (complete: LLMPort['complete']): LLMPort => ({ complete });
+
+  it('returns the snapshot when no LLM is configured', async () => {
+    const service = new SummaryService(stubBroker, fixedClock, 'Asia/Jerusalem');
+    const result = await service.buildSummary();
+    expect(result.source).toBe('snapshot');
+    expect(result.text).toContain('AAPL');
+    expect(result.llmError).toBeUndefined();
+  });
+
+  it('returns the LLM text when the LLM succeeds', async () => {
+    const llm = llmOf(async (req) => {
+      // the prompt must carry the real data — guard against an empty snapshot
+      expect(req.messages[0]?.content).toContain('AAPL');
+      return 'A calm, factual summary.';
+    });
+    const service = new SummaryService(stubBroker, fixedClock, 'Asia/Jerusalem', {
+      llm,
+      timeoutMs: 1000,
+    });
+    const result = await service.buildSummary();
+    expect(result).toEqual({ text: 'A calm, factual summary.', source: 'llm' });
+  });
+
+  it('falls back to the snapshot when the LLM throws', async () => {
+    const llm = llmOf(async () => {
+      throw new LlmError('API down');
+    });
+    const service = new SummaryService(stubBroker, fixedClock, 'Asia/Jerusalem', {
+      llm,
+      timeoutMs: 1000,
+    });
+    const result = await service.buildSummary();
+    expect(result.source).toBe('snapshot');
+    expect(result.text).toContain('Equity $105,230.10');
+    expect(result.llmError).toContain('API down');
+  });
+
+  it('falls back to the snapshot when the LLM hangs past the timeout', async () => {
+    const llm = llmOf(
+      () => new Promise((resolve) => setTimeout(() => resolve('too late'), 1000)),
+    );
+    const service = new SummaryService(stubBroker, fixedClock, 'Asia/Jerusalem', {
+      llm,
+      timeoutMs: 10,
+    });
+    const result = await service.buildSummary();
+    expect(result.source).toBe('snapshot');
+    expect(result.llmError).toContain('timed out');
+  });
+
+  it('falls back to the snapshot when the LLM returns empty text', async () => {
+    const llm = llmOf(async () => '   ');
+    const service = new SummaryService(stubBroker, fixedClock, 'Asia/Jerusalem', {
+      llm,
+      timeoutMs: 1000,
+    });
+    const result = await service.buildSummary();
+    expect(result.source).toBe('snapshot');
+    expect(result.llmError).toContain('empty');
   });
 });

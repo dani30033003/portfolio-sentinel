@@ -16,5 +16,11 @@ export class CurrencyMismatchError extends DomainError {}
 /** Thrown by messaging adapters when an outbound send fails. */
 export class MessageSendError extends DomainError {}
 
+/** Thrown by LLM adapters when a completion fails (API error, empty response...). */
+export class LlmError extends DomainError {}
+
+/** Thrown by withTimeout when the wrapped promise does not settle in time. */
+export class TimeoutError extends DomainError {}
+
 /** Placeholder thrown by human-owned module stubs that are not implemented yet. */
 export class NotImplementedError extends DomainError {}
