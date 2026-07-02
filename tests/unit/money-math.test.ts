@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { addMoney, formatMoney, money, percentChange } from '../../src/domain/entities/money-math.js';
 import { CurrencyMismatchError, InvalidMoneyError } from '../../src/domain/errors.js';
 
-describe.skip('money()', () => {
+describe('money()', () => {
   it('constructs integer-cent money', () => {
     expect(money(123456, 'USD')).toEqual({ amountCents: 123456, currency: 'USD' });
   });
@@ -35,7 +35,7 @@ describe.skip('money()', () => {
   });
 });
 
-describe.skip('addMoney()', () => {
+describe('addMoney()', () => {
   it('adds same-currency amounts', () => {
     expect(addMoney(money(150, 'USD'), money(250, 'USD'))).toEqual(money(400, 'USD'));
   });
@@ -49,7 +49,7 @@ describe.skip('addMoney()', () => {
   });
 });
 
-describe.skip('formatMoney()', () => {
+describe('formatMoney()', () => {
   // Contract: en-US currency formatting of the major units, e.g. "$1,234.56".
   it('formats USD with grouping and two decimals', () => {
     expect(formatMoney(money(123456, 'USD'))).toBe('$1,234.56');
@@ -76,7 +76,7 @@ describe.skip('formatMoney()', () => {
   });
 });
 
-describe.skip('percentChange()', () => {
+describe('percentChange()', () => {
   it('computes positive change', () => {
     expect(percentChange(money(10000, 'USD'), money(10850, 'USD'))).toBeCloseTo(8.5);
   });

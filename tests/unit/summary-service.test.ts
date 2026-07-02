@@ -39,7 +39,7 @@ const stubBroker: BrokerPort = {
 // 12:05 UTC = 15:05 in Asia/Jerusalem (UTC+3 in July / DST)
 const fixedClock: ClockPort = { now: () => new Date('2026-07-02T12:05:00Z') };
 
-describe.skip('SummaryService.buildSnapshotSummary', () => {
+describe('SummaryService.buildSnapshotSummary', () => {
   const service = new SummaryService(stubBroker, fixedClock, 'Asia/Jerusalem');
 
   it('renders the account line with formatted money', async () => {
