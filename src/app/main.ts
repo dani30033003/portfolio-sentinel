@@ -1,15 +1,19 @@
 /**
  * Composition root — the only place where concrete adapters meet domain services.
- * Phase 0 behavior: build one snapshot summary from the paper broker, send it
- * (WhatsApp if configured, console otherwise), exit.
+ * Phase 1 (in progress): build one summary — LLM-written if a provider is
+ * configured, deterministic numeric snapshot otherwise or on any LLM failure —
+ * and send it (WhatsApp if configured, console otherwise).
  */
 import { pino } from 'pino';
 import { loadConfig } from './config.js';
-import { SummaryService } from '../domain/services/summary-service.js';
+import type { LLMPort } from '../domain/ports/llm-port.js';
+import { SummaryService, type LlmSummaryConfig } from '../domain/services/summary-service.js';
 import { PaperBrokerAdapter } from '../adapters/broker-paper/paper-broker-adapter.js';
 import { SystemClock } from '../adapters/clock-system/system-clock.js';
 import { ConsoleMessagingAdapter } from '../adapters/messaging-console/console-messaging-adapter.js';
 import { WhatsAppAdapter } from '../adapters/messaging-whatsapp/whatsapp-adapter.js';
+import { AnthropicAdapter } from '../adapters/llm-anthropic/anthropic-adapter.js';
+import { GeminiAdapter } from '../adapters/llm-gemini/gemini-adapter.js';
 
 // Node 22+ loads .env natively — no dotenv dependency needed.
 try {
@@ -28,16 +32,35 @@ const messaging = config.whatsapp
   : new ConsoleMessagingAdapter();
 const recipient = config.whatsapp?.to ?? 'console';
 
-const summaryService = new SummaryService(broker, clock, config.timeZone);
+let llm: LLMPort | undefined;
+if (config.llm.provider === 'anthropic') {
+  llm = new AnthropicAdapter(config.llm);
+} else if (config.llm.provider === 'gemini') {
+  llm = new GeminiAdapter(config.llm);
+}
+const llmSummaryConfig: LlmSummaryConfig | undefined =
+  llm && config.llm.provider !== 'none'
+    ? { llm, timeoutMs: config.llm.timeoutMs }
+    : undefined;
+
+const summaryService = new SummaryService(broker, clock, config.timeZone, llmSummaryConfig);
 
 try {
-  const text = await summaryService.buildSnapshotSummary();
-  await messaging.sendMessage(recipient, text);
+  const result = await summaryService.buildSummary();
+  await messaging.sendMessage(recipient, result.text);
+  if (result.llmError) {
+    logger.warn(
+      { component: 'app', llmProvider: config.llm.provider, err: result.llmError },
+      'LLM summary failed — sent numeric fallback',
+    );
+  }
   logger.info(
     {
       component: 'app',
       transport: config.whatsapp ? 'whatsapp' : 'console',
-      chars: text.length,
+      summarySource: result.source,
+      llmProvider: config.llm.provider,
+      chars: result.text.length,
     },
     'summary sent',
   );

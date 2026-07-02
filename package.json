@@ -17,6 +17,7 @@
     "test:contract": "vitest run tests/contract"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.109.1",
     "pino": "^10.3.1"
   },
   "devDependencies": {
