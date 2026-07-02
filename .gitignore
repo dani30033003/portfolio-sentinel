@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+
+# secrets — never commit the real env file
+.env
+
+# local SQLite databases (Phase 1+)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

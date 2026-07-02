@@ -1,0 +1,33 @@
+{
+  "name": "portfolio-sentinel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal portfolio watchdog: IBKR -> hexagonal core -> Claude summaries/alerts -> WhatsApp",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx src/app/main.ts",
+    "summary": "tsx src/app/main.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:contract": "vitest run tests/contract"
+  },
+  "dependencies": {
+    "pino": "^10.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.1.0",
+    "eslint": "^10.6.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.4",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.1",
+    "vitest": "^4.1.9"
+  }
+}
