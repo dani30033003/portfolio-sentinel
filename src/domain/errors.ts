@@ -22,5 +22,8 @@ export class LlmError extends DomainError {}
 /** Thrown by withTimeout when the wrapped promise does not settle in time. */
 export class TimeoutError extends DomainError {}
 
+/** Thrown by storage adapters when a read or write fails (disk, corruption...). */
+export class StorageError extends DomainError {}
+
 /** Placeholder thrown by human-owned module stubs that are not implemented yet. */
 export class NotImplementedError extends DomainError {}
