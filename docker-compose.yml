@@ -1,0 +1,28 @@
+services:
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    restart: unless-stopped
+    environment:
+      TWS_USERID: ${IBKR_USERNAME}
+      TWS_PASSWORD: ${IBKR_PASSWORD}
+      # Hardcoded, not env-driven — CLAUDE.md rule #9: paper only until explicitly promoted.
+      TRADING_MODE: paper
+      READ_ONLY_API: "yes"
+      # Scheduled restart lines up with IBKR's own forced daily restart, which avoids
+      # an extra 2FA prompt (per IBC docs). Cold starts/crash-restarts still need a
+      # manual approve on the IBKR Mobile app — see docs/adr/0001-ib-gateway-2fa.md.
+      AUTO_RESTART_TIME: "03:00 AM"
+      TIME_ZONE: Asia/Jerusalem
+      # Temporary, to watch the GUI during first paper login (2FA approval —
+      # docs/adr/0001-ib-gateway-2fa.md). Remove once login proceeds unattended.
+      VNC_SERVER_PASSWORD: ${IBKR_VNC_PASSWORD}
+    ports:
+      # Paper API port, bound to localhost only — never exposed beyond the host.
+      - "127.0.0.1:4002:4002"
+      # VNC into the Gateway GUI, localhost only — see note above.
+      - "127.0.0.1:5900:5900"
+    volumes:
+      - ib-gateway-data:/home/ibgateway
+
+volumes:
+  ib-gateway-data:
