@@ -3,7 +3,8 @@ import { buildWebhookServer } from '../../src/webhook/server.js';
 
 const VERIFY_TOKEN = 'correct-verify-token';
 
-const build = () => buildWebhookServer({ verifyToken: VERIFY_TOKEN });
+const build = () =>
+  buildWebhookServer({ verifyToken: VERIFY_TOKEN, appSecret: 'unused-in-these-tests' });
 
 // Meta's verification handshake: GET with hub.* query params; we must echo
 // hub.challenge back as plain text iff hub.verify_token matches our config.

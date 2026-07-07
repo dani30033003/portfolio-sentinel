@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { verifySignature } from './verify-signature.js';
 
 export interface WebhookServerOptions {
   /**
@@ -7,6 +8,11 @@ export interface WebhookServerOptions {
    * Meta-issued credential.
    */
   verifyToken: string;
+  /**
+   * Meta-issued app secret (dashboard → App settings → Basic). Keys the HMAC
+   * that authenticates every inbound POST.
+   */
+  appSecret: string;
 }
 
 /** Meta sends the hub.* params with literal dots in the key names. */
@@ -22,6 +28,19 @@ interface VerificationQuery {
  */
 export function buildWebhookServer(options: WebhookServerOptions): FastifyInstance {
   const app = Fastify({ logger: false });
+
+  // Replace Fastify's default JSON parsing with "hand me the raw bytes".
+  // The HMAC was computed by Meta over the wire bytes, so we must verify
+  // against exactly those bytes — parsing to JSON and re-serializing could
+  // change key order or whitespace and break the digest. Handlers receive
+  // request.body as a Buffer and parse it themselves AFTER authentication.
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'buffer' },
+    (_request, rawBody, done) => {
+      done(null, rawBody);
+    },
+  );
 
   // Meta's subscription handshake: prove we own this URL by echoing the
   // challenge, but only if the caller knows our verify token. A plain
@@ -39,6 +58,33 @@ export function buildWebhookServer(options: WebhookServerOptions): FastifyInstan
     }
     // Meta expects the raw challenge string back, not JSON.
     return reply.type('text/plain').send(query['hub.challenge']);
+  });
+
+  // Inbound events. Order is the security story: authenticate the raw bytes
+  // first; only then spend any parsing effort on them.
+  app.post('/webhook', (request, reply) => {
+    const rawBody = request.body as Buffer; // guaranteed by the parser above
+
+    const header = request.headers['x-hub-signature-256'];
+    // A duplicated header arrives as string[] — treat anything but a single
+    // string as unauthenticated rather than guessing which copy to trust.
+    const signature = typeof header === 'string' ? header : undefined;
+
+    if (!verifySignature(rawBody, signature, options.appSecret)) {
+      return reply.code(401).send();
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(rawBody.toString('utf8'));
+    } catch {
+      return reply.code(400).send();
+    }
+
+    // Step ③ (sender whitelist) and step ④ (payload extraction → command
+    // parser) plug in here. Until then: authenticated, acknowledged, ignored.
+    void payload;
+    return reply.code(200).send();
   });
 
   return app;
