@@ -2,7 +2,8 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
 import { verifySignature } from './verify-signature.js';
 import { isWhitelistedSender } from './sender-whitelist.js';
-import { extractSenders } from './whatsapp-payload.js';
+import { extractMessages } from './whatsapp-payload.js';
+import { parseCommand, type Command } from './command-parser.js';
 
 export interface WebhookServerOptions {
   /**
@@ -24,6 +25,14 @@ export interface WebhookServerOptions {
   senderWhitelist: readonly string[];
   /** Optional: rejected senders are logged at debug only (never message bodies). */
   logger?: Logger;
+  /**
+   * Called once per parsed command from a whitelisted sender. This server
+   * only classifies text into a Command — deciding what STATUS/SUMMARY
+   * actually do is the composition root's job, not this module's; server.ts
+   * stays ignorant of SummaryService, MessagingPort, or any other domain
+   * dependency.
+   */
+  onCommand?: (sender: string, command: Command) => void;
 }
 
 /** Meta sends the hub.* params with literal dots in the key names. */
@@ -92,19 +101,26 @@ export function buildWebhookServer(options: WebhookServerOptions): FastifyInstan
       return reply.code(400).send();
     }
 
-    const senders = extractSenders(payload);
-    const rejected = senders.filter((from) => !isWhitelistedSender(from, options.senderWhitelist));
-    if (rejected.length > 0) {
+    const messages = extractMessages(payload);
+    const rejectedSenders: string[] = [];
+
+    for (const message of messages) {
+      if (!isWhitelistedSender(message.from, options.senderWhitelist)) {
+        rejectedSenders.push(message.from);
+        continue;
+      }
+      if (message.text !== undefined) {
+        options.onCommand?.(message.from, parseCommand(message.text));
+      }
+    }
+
+    if (rejectedSenders.length > 0) {
       options.logger?.debug(
-        { component: 'webhook', rejectedSenders: rejected },
+        { component: 'webhook', rejectedSenders },
         'dropped message from non-whitelisted sender',
       );
     }
 
-    // Step ④ (payload → command parser, for whitelisted senders only) plugs
-    // in here. Until then: authenticated, whitelist-checked, acknowledged,
-    // ignored.
-    void payload;
     return reply.code(200).send();
   });
 
