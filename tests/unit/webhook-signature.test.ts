@@ -44,7 +44,7 @@ describe('verifySignature', () => {
 
 describe('POST /webhook (signature enforcement)', () => {
   const build = () =>
-    buildWebhookServer({ verifyToken: 'irrelevant-here', appSecret: APP_SECRET });
+    buildWebhookServer({ verifyToken: 'irrelevant-here', appSecret: APP_SECRET, senderWhitelist: [] });
 
   const VALID_BODY = JSON.stringify({ object: 'whatsapp_business_account', entry: [] });
 

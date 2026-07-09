@@ -1,5 +1,8 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import type { Logger } from 'pino';
 import { verifySignature } from './verify-signature.js';
+import { isWhitelistedSender } from './sender-whitelist.js';
+import { extractSenders } from './whatsapp-payload.js';
 
 export interface WebhookServerOptions {
   /**
@@ -13,6 +16,14 @@ export interface WebhookServerOptions {
    * that authenticates every inbound POST.
    */
   appSecret: string;
+  /**
+   * Senders allowed to reach anything past authentication. Single-tenant, so
+   * this is normally just [WHATSAPP_TO] — the one number this deployment
+   * talks to. Messages from anyone else are dropped before any processing.
+   */
+  senderWhitelist: readonly string[];
+  /** Optional: rejected senders are logged at debug only (never message bodies). */
+  logger?: Logger;
 }
 
 /** Meta sends the hub.* params with literal dots in the key names. */
@@ -81,8 +92,18 @@ export function buildWebhookServer(options: WebhookServerOptions): FastifyInstan
       return reply.code(400).send();
     }
 
-    // Step ③ (sender whitelist) and step ④ (payload extraction → command
-    // parser) plug in here. Until then: authenticated, acknowledged, ignored.
+    const senders = extractSenders(payload);
+    const rejected = senders.filter((from) => !isWhitelistedSender(from, options.senderWhitelist));
+    if (rejected.length > 0) {
+      options.logger?.debug(
+        { component: 'webhook', rejectedSenders: rejected },
+        'dropped message from non-whitelisted sender',
+      );
+    }
+
+    // Step ④ (payload → command parser, for whitelisted senders only) plugs
+    // in here. Until then: authenticated, whitelist-checked, acknowledged,
+    // ignored.
     void payload;
     return reply.code(200).send();
   });
