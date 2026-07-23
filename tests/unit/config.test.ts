@@ -52,3 +52,40 @@ describe('loadConfig — LLM selection', () => {
     expect(() => loadConfig({ LLM_TIMEOUT_MS: 'fast' })).toThrow(ConfigError);
   });
 });
+
+describe('loadConfig — webhook', () => {
+  it('leaves webhook undefined when neither var is set', () => {
+    expect(loadConfig({}).webhook).toBeUndefined();
+  });
+
+  it('builds webhook config with the default port when both vars are set', () => {
+    const config = loadConfig({
+      WHATSAPP_VERIFY_TOKEN: 'v',
+      WHATSAPP_APP_SECRET: 's',
+    });
+    expect(config.webhook).toEqual({ verifyToken: 'v', appSecret: 's', port: 3000 });
+  });
+
+  it('honors a WEBHOOK_PORT override', () => {
+    const config = loadConfig({
+      WHATSAPP_VERIFY_TOKEN: 'v',
+      WHATSAPP_APP_SECRET: 's',
+      WEBHOOK_PORT: '8080',
+    });
+    expect(config.webhook).toMatchObject({ port: 8080 });
+  });
+
+  it('rejects a verify token without an app secret', () => {
+    expect(() => loadConfig({ WHATSAPP_VERIFY_TOKEN: 'v' })).toThrow(ConfigError);
+  });
+
+  it('rejects an app secret without a verify token', () => {
+    expect(() => loadConfig({ WHATSAPP_APP_SECRET: 's' })).toThrow(ConfigError);
+  });
+
+  it('rejects a non-numeric WEBHOOK_PORT', () => {
+    expect(() =>
+      loadConfig({ WHATSAPP_VERIFY_TOKEN: 'v', WHATSAPP_APP_SECRET: 's', WEBHOOK_PORT: 'nope' }),
+    ).toThrow(ConfigError);
+  });
+});

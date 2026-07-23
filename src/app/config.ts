@@ -17,6 +17,8 @@ export interface AppConfig {
   timeZone: string;
   /** Absent → dry-run mode: messages print to the console. */
   whatsapp?: { token: string; phoneNumberId: string; to: PhoneNumber };
+  /** Absent → the webhook entry point refuses to start. Independent of `whatsapp`. */
+  webhook?: { verifyToken: string; appSecret: string; port: number };
   /** provider "none" → summaries stay deterministic (numeric snapshot). */
   llm: LlmConfig;
 }
@@ -24,6 +26,7 @@ export interface AppConfig {
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 const DEFAULT_LLM_TIMEOUT_MS = 30_000;
+const DEFAULT_WEBHOOK_PORT = 3000;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const timeZone = env.USER_TIMEZONE ?? 'Asia/Jerusalem';
@@ -42,9 +45,41 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     );
   }
 
+  const webhook = loadWebhookConfig(env);
   const llm = loadLlmConfig(env);
 
-  return whatsapp ? { timeZone, whatsapp, llm } : { timeZone, llm };
+  return {
+    timeZone,
+    llm,
+    ...(whatsapp ? { whatsapp } : {}),
+    ...(webhook ? { webhook } : {}),
+  };
+}
+
+/**
+ * Separate from `whatsapp`: sending summaries (main.ts) needs only the
+ * outbound Graph API credentials, while receiving commands (webhook-main.ts)
+ * additionally needs the verify token and app secret to authenticate inbound
+ * POSTs. Keeping them apart means main.ts never has to know these exist.
+ */
+function loadWebhookConfig(env: NodeJS.ProcessEnv): AppConfig['webhook'] {
+  const verifyToken = env.WHATSAPP_VERIFY_TOKEN;
+  const appSecret = env.WHATSAPP_APP_SECRET;
+
+  if (!verifyToken && !appSecret) return undefined;
+  if (!verifyToken || !appSecret) {
+    throw new ConfigError(
+      'Partial webhook config: set both WHATSAPP_VERIFY_TOKEN and WHATSAPP_APP_SECRET, ' +
+        'or neither.',
+    );
+  }
+
+  const port = env.WEBHOOK_PORT ? Number(env.WEBHOOK_PORT) : DEFAULT_WEBHOOK_PORT;
+  if (!Number.isFinite(port) || port <= 0) {
+    throw new ConfigError(`WEBHOOK_PORT must be a positive number, got "${env.WEBHOOK_PORT}"`);
+  }
+
+  return { verifyToken, appSecret, port };
 }
 
 function loadLlmConfig(env: NodeJS.ProcessEnv): LlmConfig {

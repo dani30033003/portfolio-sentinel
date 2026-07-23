@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "tsx src/app/main.ts",
     "summary": "tsx src/app/main.ts",
+    "webhook": "tsx src/app/webhook-main.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
