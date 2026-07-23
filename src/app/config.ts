@@ -21,12 +21,15 @@ export interface AppConfig {
   webhook?: { verifyToken: string; appSecret: string; port: number };
   /** provider "none" → summaries stay deterministic (numeric snapshot). */
   llm: LlmConfig;
+  /** SQLite file for snapshots/summaries. Local, no secret; always set. */
+  dbPath: string;
 }
 
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 const DEFAULT_LLM_TIMEOUT_MS = 30_000;
 const DEFAULT_WEBHOOK_PORT = 3000;
+const DEFAULT_DB_PATH = './data/portfolio-sentinel.db';
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const timeZone = env.USER_TIMEZONE ?? 'Asia/Jerusalem';
@@ -47,10 +50,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const webhook = loadWebhookConfig(env);
   const llm = loadLlmConfig(env);
+  const dbPath = env.DB_PATH ?? DEFAULT_DB_PATH;
 
   return {
     timeZone,
     llm,
+    dbPath,
     ...(whatsapp ? { whatsapp } : {}),
     ...(webhook ? { webhook } : {}),
   };

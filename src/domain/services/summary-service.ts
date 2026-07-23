@@ -1,6 +1,11 @@
 import type { BrokerPort } from '../ports/broker-port.js';
 import type { ClockPort } from '../ports/clock-port.js';
 import type { LLMPort } from '../ports/llm-port.js';
+import type {
+  PortfolioSnapshot,
+  StoragePort,
+  SummaryKind,
+} from '../ports/storage-port.js';
 import type { Position } from '../entities/position.js';
 import { formatMoney, percentChange } from '../entities/money-math.js';
 import { buildSummaryPrompt } from '../prompts/summary-prompt.js';
@@ -19,6 +24,13 @@ export interface SummaryResult {
   readonly source: 'llm' | 'snapshot';
   /** Set when the LLM was configured but failed and we fell back. */
   readonly llmError?: string;
+  /**
+   * Set when persistence was configured but failed. Like `llmError`, this is a
+   * report, not a thrown error: storing the summary is secondary to sending it,
+   * so a storage failure never blocks the (already-built) text (CLAUDE.md hard
+   * rule 6 in spirit — the deliverable output never depends on a side channel).
+   */
+  readonly storageError?: string;
 }
 
 export class SummaryService {
@@ -29,63 +41,115 @@ export class SummaryService {
     private readonly timeZone: string,
     /** Absent → summaries are always the deterministic numeric snapshot. */
     private readonly llmConfig?: LlmSummaryConfig,
+    /** Absent → nothing is persisted (e.g. unit tests, dry runs). */
+    private readonly storage?: StoragePort,
   ) {}
 
   /**
    * The summary to send: LLM-written when configured, but never dependent on
    * it (CLAUDE.md hard rule 6) — any LLM failure or timeout falls back to the
-   * numeric snapshot, which is always computed first and always sendable.
+   * numeric snapshot, which is always computed first and always sendable. When
+   * a StoragePort is configured, the snapshot and the summary are persisted
+   * after the text is produced; a persistence failure is surfaced on the result
+   * (`storageError`), never thrown, so it cannot block delivery.
+   *
+   * @param kind why this summary was produced — `scheduled` for the timed push
+   *   (main.ts), `on_demand` for a SUMMARY command (webhook-main.ts).
    */
-  async buildSummary(): Promise<SummaryResult> {
-    const snapshot = await this.buildSnapshotSummary();
-    if (!this.llmConfig) {
-      return { text: snapshot, source: 'snapshot' };
-    }
+  async buildSummary(kind: SummaryKind = 'on_demand'): Promise<SummaryResult> {
+    const snapshot = await this.fetchSnapshot();
+    const snapshotText = renderSnapshot(snapshot, this.timeZone);
 
+    const result = this.llmConfig
+      ? await this.buildLlmSummary(this.llmConfig, snapshotText)
+      : { text: snapshotText, source: 'snapshot' as const };
+
+    const storageError = await this.persist(snapshot, result.text, kind);
+    return storageError === undefined ? result : { ...result, storageError };
+  }
+
+  /** Deterministic plain-text snapshot — no LLM. Also the fallback message. */
+  async buildSnapshotSummary(): Promise<string> {
+    return renderSnapshot(await this.fetchSnapshot(), this.timeZone);
+  }
+
+  /** One broker round-trip, timestamped once so snapshot and summary agree. */
+  private async fetchSnapshot(): Promise<PortfolioSnapshot> {
+    const [account, positions] = await Promise.all([
+      this.broker.getAccountSummary(),
+      this.broker.getPositions(),
+    ]);
+    return { takenAt: this.clock.now(), account, positions };
+  }
+
+  /** The LLM branch: prompt, timeout-wrapped call, fall back on any failure. */
+  private async buildLlmSummary(
+    llmConfig: LlmSummaryConfig,
+    snapshotText: string,
+  ): Promise<SummaryResult> {
     try {
       const prompt = buildSummaryPrompt({
-        snapshot,
-        ...(this.llmConfig.userProfile !== undefined
-          ? { userProfile: this.llmConfig.userProfile }
-          : {}),
+        snapshot: snapshotText,
+        ...(llmConfig.userProfile !== undefined ? { userProfile: llmConfig.userProfile } : {}),
       });
       const text = await withTimeout(
-        this.llmConfig.llm.complete({
+        llmConfig.llm.complete({
           system: prompt.system,
           messages: [{ role: 'user', content: prompt.user }],
           maxTokens: 1024,
         }),
-        this.llmConfig.timeoutMs,
+        llmConfig.timeoutMs,
         'LLM summary',
       );
       if (!text.trim()) {
-        return { text: snapshot, source: 'snapshot', llmError: 'LLM returned empty text' };
+        return { text: snapshotText, source: 'snapshot', llmError: 'LLM returned empty text' };
       }
       return { text: text.trim(), source: 'llm' };
     } catch (error) {
       return {
-        text: snapshot,
+        text: snapshotText,
         source: 'snapshot',
         llmError: error instanceof Error ? error.message : String(error),
       };
     }
   }
 
-  /** Deterministic plain-text snapshot — no LLM. Also the fallback message. */
-  async buildSnapshotSummary(): Promise<string> {
-    const [account, positions] = await Promise.all([
-      this.broker.getAccountSummary(),
-      this.broker.getPositions(),
-    ]);
-
-    const header = `Portfolio snapshot — ${formatTimestamp(this.clock.now(), this.timeZone)}`;
-    const accountLine =
-      `Equity ${formatMoney(account.equity)} | ` +
-      `Cash ${formatMoney(account.cash)} | ` +
-      `Day P&L ${formatMoney(account.dayPnl, { withSign: true })}`;
-
-    return [header, accountLine, '', ...positions.map(positionLine)].join('\n');
+  /**
+   * Persist the snapshot and the summary, if storage is configured. Returns an
+   * error message on failure instead of throwing — the caller has already got
+   * sendable text and must not be blocked by a storage problem.
+   */
+  private async persist(
+    snapshot: PortfolioSnapshot,
+    text: string,
+    kind: SummaryKind,
+  ): Promise<string | undefined> {
+    if (!this.storage) return undefined;
+    try {
+      await this.storage.saveSnapshot(snapshot);
+      await this.storage.saveSummary({
+        sentAt: snapshot.takenAt,
+        kind,
+        text,
+        positionsJson: JSON.stringify(snapshot.positions),
+      });
+      return undefined;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
   }
+}
+
+/** Pure formatting — no I/O, no clock. Snapshot in, message text out. */
+function renderSnapshot(snapshot: PortfolioSnapshot, timeZone: string): string {
+  const { account } = snapshot;
+  const header = `Portfolio snapshot — ${formatTimestamp(snapshot.takenAt, timeZone)}`;
+  const accountLine =
+    `Equity ${formatMoney(account.equity)} | ` +
+    `Cash ${formatMoney(account.cash)} | ` +
+    `Day P&L ${formatMoney(account.dayPnl, { withSign: true })}`;
+
+  return [header, accountLine, '', ...snapshot.positions.map(positionLine)].join('\n');
 }
 
 function positionLine(p: Position): string {

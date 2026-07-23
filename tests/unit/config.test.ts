@@ -89,3 +89,13 @@ describe('loadConfig — webhook', () => {
     ).toThrow(ConfigError);
   });
 });
+
+describe('loadConfig — storage', () => {
+  it('defaults dbPath when DB_PATH is unset', () => {
+    expect(loadConfig({}).dbPath).toBe('./data/portfolio-sentinel.db');
+  });
+
+  it('honors a DB_PATH override', () => {
+    expect(loadConfig({ DB_PATH: '/var/lib/sentinel.db' }).dbPath).toBe('/var/lib/sentinel.db');
+  });
+});

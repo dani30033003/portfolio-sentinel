@@ -6,6 +6,10 @@ coverage/
 .env
 
 # local SQLite databases (Phase 1+)
+data/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+*.db
+*.db-wal
+*.db-shm

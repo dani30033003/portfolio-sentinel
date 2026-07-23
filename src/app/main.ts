@@ -14,6 +14,7 @@ import { ConsoleMessagingAdapter } from '../adapters/messaging-console/console-m
 import { WhatsAppAdapter } from '../adapters/messaging-whatsapp/whatsapp-adapter.js';
 import { AnthropicAdapter } from '../adapters/llm-anthropic/anthropic-adapter.js';
 import { GeminiAdapter } from '../adapters/llm-gemini/gemini-adapter.js';
+import { SqliteStorageAdapter } from '../adapters/storage-sqlite/sqlite-storage-adapter.js';
 
 // Node 22+ loads .env natively — no dotenv dependency needed.
 try {
@@ -43,15 +44,28 @@ const llmSummaryConfig: LlmSummaryConfig | undefined =
     ? { llm, timeoutMs: config.llm.timeoutMs }
     : undefined;
 
-const summaryService = new SummaryService(broker, clock, config.timeZone, llmSummaryConfig);
+const storage = new SqliteStorageAdapter(config.dbPath);
+const summaryService = new SummaryService(
+  broker,
+  clock,
+  config.timeZone,
+  llmSummaryConfig,
+  storage,
+);
 
 try {
-  const result = await summaryService.buildSummary();
+  const result = await summaryService.buildSummary('scheduled');
   await messaging.sendMessage(recipient, result.text);
   if (result.llmError) {
     logger.warn(
       { component: 'app', llmProvider: config.llm.provider, err: result.llmError },
       'LLM summary failed — sent numeric fallback',
+    );
+  }
+  if (result.storageError) {
+    logger.warn(
+      { component: 'app', err: result.storageError },
+      'summary sent but not persisted',
     );
   }
   logger.info(
@@ -67,4 +81,7 @@ try {
 } catch (error) {
   logger.error({ component: 'app', err: error }, 'summary failed');
   process.exitCode = 1;
+} finally {
+  // Single-shot process: flush WAL and release the file before exiting.
+  storage.close();
 }

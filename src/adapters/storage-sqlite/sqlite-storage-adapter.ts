@@ -1,3 +1,5 @@
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 import { StorageError } from '../../domain/errors.js';
 import type {
@@ -50,6 +52,13 @@ export class SqliteStorageAdapter implements StoragePort {
 
   /** @param path a file path, or ':memory:' for an ephemeral DB (tests). */
   constructor(path: string) {
+    // better-sqlite3 creates the DB file but NOT its parent directory, so a
+    // configured path like ./data/app.db would throw on a fresh checkout.
+    // Create the directory here — the adapter owns its file, so both
+    // composition roots stay ignorant of the filesystem. Skipped for :memory:.
+    if (path !== ':memory:') {
+      mkdirSync(dirname(path), { recursive: true });
+    }
     this.db = new Database(path);
     // WAL: writes go to a separate log file instead of rewriting the main DB
     // in place, so the scheduler can write a snapshot while a webhook request

@@ -17,6 +17,7 @@ import { SystemClock } from '../adapters/clock-system/system-clock.js';
 import { WhatsAppAdapter } from '../adapters/messaging-whatsapp/whatsapp-adapter.js';
 import { AnthropicAdapter } from '../adapters/llm-anthropic/anthropic-adapter.js';
 import { GeminiAdapter } from '../adapters/llm-gemini/gemini-adapter.js';
+import { SqliteStorageAdapter } from '../adapters/storage-sqlite/sqlite-storage-adapter.js';
 
 try {
   process.loadEnvFile();
@@ -48,7 +49,14 @@ if (config.llm.provider === 'anthropic') {
 const llmSummaryConfig: LlmSummaryConfig | undefined =
   llm && config.llm.provider !== 'none' ? { llm, timeoutMs: config.llm.timeoutMs } : undefined;
 
-const summaryService = new SummaryService(broker, clock, config.timeZone, llmSummaryConfig);
+const storage = new SqliteStorageAdapter(config.dbPath);
+const summaryService = new SummaryService(
+  broker,
+  clock,
+  config.timeZone,
+  llmSummaryConfig,
+  storage,
+);
 
 /**
  * Does the actual work for a classified command. Runs after buildWebhookServer
@@ -58,12 +66,18 @@ const summaryService = new SummaryService(broker, clock, config.timeZone, llmSum
 async function handleCommand(sender: string, command: Command): Promise<void> {
   switch (command.command) {
     case 'summary': {
-      const result = await summaryService.buildSummary();
+      const result = await summaryService.buildSummary('on_demand');
       await messaging.sendMessage(sender, result.text);
       if (result.llmError) {
         logger.warn(
           { component: 'webhook', llmProvider: config.llm.provider, err: result.llmError },
           'LLM summary failed — sent numeric fallback',
+        );
+      }
+      if (result.storageError) {
+        logger.warn(
+          { component: 'webhook', err: result.storageError },
+          'summary sent but not persisted',
         );
       }
       return;
@@ -101,6 +115,19 @@ const app = buildWebhookServer({
     });
   },
 });
+
+// Long-running process: close the server and flush the SQLite WAL on the
+// signals a container/orchestrator uses to stop us, so we don't leave a
+// -wal file behind or drop an in-flight write.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    logger.info({ component: 'webhook', signal }, 'shutting down');
+    void app.close().finally(() => {
+      storage.close();
+      process.exit(0);
+    });
+  });
+}
 
 try {
   await app.listen({ port: webhook.port, host: '0.0.0.0' });
