@@ -139,6 +139,105 @@ describe('SqliteStorageAdapter', () => {
     });
   });
 
+  describe('alerts', () => {
+    const alertAt = (iso: string, subject = 'NVDA') => ({
+      firedAt: new Date(iso),
+      ruleId: 'position_drop' as const,
+      subject,
+      changePercent: -4.7,
+      tierPercent: 4,
+      text: `${subject} dropped`,
+      source: 'numeric' as const,
+    });
+
+    it('round-trips an alert, most recent first', async () => {
+      await storage.saveAlert(alertAt('2026-07-06T09:00:00.000Z', 'NVDA'));
+      await storage.saveAlert(alertAt('2026-07-06T11:00:00.000Z', 'AAPL'));
+
+      const recent = await storage.getRecentAlerts(10);
+      expect(recent.map((a) => a.subject)).toEqual(['AAPL', 'NVDA']);
+      expect(recent[0]?.changePercent).toBe(-4.7);
+      expect(recent[0]?.firedAt).toEqual(new Date('2026-07-06T11:00:00.000Z'));
+    });
+
+    it('counts only alerts at or after the cutoff (backs the daily cap)', async () => {
+      await storage.saveAlert(alertAt('2026-07-05T23:00:00.000Z'));
+      await storage.saveAlert(alertAt('2026-07-06T09:00:00.000Z'));
+      await storage.saveAlert(alertAt('2026-07-06T10:00:00.000Z'));
+
+      const count = await storage.countAlertsSince(new Date('2026-07-06T00:00:00.000Z'));
+      expect(count).toBe(2);
+    });
+  });
+
+  describe('conversations', () => {
+    it('returns the last N turns oldest-first', async () => {
+      for (const [index, role] of ['user', 'assistant', 'user', 'assistant'].entries()) {
+        await storage.appendConversationTurn({
+          at: new Date(Date.UTC(2026, 6, 6, 9, index)),
+          role: role as 'user' | 'assistant',
+          text: `turn ${index}`,
+        });
+      }
+
+      const window = await storage.getRecentConversation(3);
+      expect(window.map((t) => t.text)).toEqual(['turn 1', 'turn 2', 'turn 3']);
+      expect(window[0]?.role).toBe('assistant');
+    });
+  });
+
+  describe('recommendations', () => {
+    const recommendationAt = (iso: string, symbol = 'NVDA') => ({
+      madeAt: new Date(iso),
+      symbol,
+      direction: 'trim' as const,
+      rationale: 'up 30% since entry',
+      priceCents: 117_500,
+      currency: 'USD',
+      source: 'summary' as const,
+    });
+
+    it('stores a recommendation and returns its id', async () => {
+      const id = await storage.saveRecommendation(recommendationAt('2026-07-06T09:00:00.000Z'));
+      expect(id).toBeGreaterThan(0);
+
+      const [stored] = await storage.getRecentRecommendations(1);
+      expect(stored?.symbol).toBe('NVDA');
+      expect(stored?.scores).toEqual({});
+    });
+
+    it('lists only recommendations old enough for the horizon and not yet scored', async () => {
+      const asOf = new Date('2026-07-10T09:00:00.000Z');
+      const oldId = await storage.saveRecommendation(recommendationAt('2026-07-06T09:00:00.000Z'));
+      await storage.saveRecommendation(recommendationAt('2026-07-10T08:00:00.000Z', 'AAPL'));
+
+      const due = await storage.getRecommendationsDueForScoring('1d', asOf);
+      expect(due.map((r) => r.id)).toEqual([oldId]);
+
+      await storage.recordRecommendationScore(oldId, '1d', -2.5);
+      expect(await storage.getRecommendationsDueForScoring('1d', asOf)).toHaveLength(0);
+      // 7d has not elapsed for either, so scoring 1d does not leak across horizons
+      expect(await storage.getRecommendationsDueForScoring('7d', asOf)).toHaveLength(0);
+
+      const all = await storage.getRecentRecommendations(10);
+      expect(all.find((r) => r.id === oldId)?.scores).toEqual({ '1d': -2.5 });
+      expect(all.find((r) => r.symbol === 'AAPL')?.scores).toEqual({});
+    });
+  });
+
+  describe('stats', () => {
+    it('counts rows per table and reports a non-zero size', async () => {
+      await storage.saveSnapshot(snapshotAt('2026-07-06T09:00:00.000Z'));
+      await storage.saveSummary({ sentAt: new Date(), kind: 'scheduled', text: 'hi' });
+
+      const stats = await storage.getStats();
+      expect(stats.snapshotCount).toBe(1);
+      expect(stats.summaryCount).toBe(1);
+      expect(stats.alertCount).toBe(0);
+      expect(stats.sizeBytes).toBeGreaterThan(0);
+    });
+  });
+
   describe('error translation', () => {
     it('rejects with StorageError, never a raw SQLite error', async () => {
       storage.close(); // force every subsequent call to fail

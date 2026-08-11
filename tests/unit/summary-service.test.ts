@@ -3,12 +3,9 @@ import { SummaryService } from '../../src/domain/services/summary-service.js';
 import type { BrokerPort } from '../../src/domain/ports/broker-port.js';
 import type { ClockPort } from '../../src/domain/ports/clock-port.js';
 import type { LLMPort } from '../../src/domain/ports/llm-port.js';
-import type {
-  PortfolioSnapshot,
-  StoragePort,
-  StoredSummary,
-} from '../../src/domain/ports/storage-port.js';
+import type { StoragePort } from '../../src/domain/ports/storage-port.js';
 import { LlmError, StorageError } from '../../src/domain/errors.js';
+import { FakeStorage } from '../helpers/fake-storage.js';
 
 const usd = (amountCents: number) => ({ amountCents, currency: 'USD' });
 
@@ -128,29 +125,9 @@ describe('SummaryService.buildSummary — LLM path and fallback (hard rule 6)', 
   });
 });
 
-/** Records what it was asked to persist; no LLM configured, so text = snapshot. */
-class RecordingStorage implements StoragePort {
-  readonly snapshots: PortfolioSnapshot[] = [];
-  readonly summaries: StoredSummary[] = [];
-  saveSnapshot(snapshot: PortfolioSnapshot): Promise<void> {
-    this.snapshots.push(snapshot);
-    return Promise.resolve();
-  }
-  getLatestSnapshot(): Promise<PortfolioSnapshot | null> {
-    return Promise.resolve(this.snapshots.at(-1) ?? null);
-  }
-  saveSummary(summary: StoredSummary): Promise<void> {
-    this.summaries.push(summary);
-    return Promise.resolve();
-  }
-  getRecentSummaries(limit: number): Promise<StoredSummary[]> {
-    return Promise.resolve(this.summaries.slice(-limit).reverse());
-  }
-}
-
 describe('SummaryService.buildSummary — persistence', () => {
   it('persists the snapshot and the summary when storage is configured', async () => {
-    const storage = new RecordingStorage();
+    const storage = new FakeStorage();
     const service = new SummaryService(stubBroker, fixedClock, 'Asia/Jerusalem', undefined, storage);
 
     const result = await service.buildSummary('scheduled');
@@ -175,12 +152,9 @@ describe('SummaryService.buildSummary — persistence', () => {
   });
 
   it('surfaces storageError but still returns sendable text when persistence fails', async () => {
-    const failing: StoragePort = {
+    const failing: StoragePort = Object.assign(new FakeStorage(), {
       saveSnapshot: () => Promise.reject(new StorageError('disk full')),
-      getLatestSnapshot: () => Promise.resolve(null),
-      saveSummary: () => Promise.resolve(),
-      getRecentSummaries: () => Promise.resolve([]),
-    };
+    });
     const service = new SummaryService(stubBroker, fixedClock, 'Asia/Jerusalem', undefined, failing);
 
     const result = await service.buildSummary('scheduled');

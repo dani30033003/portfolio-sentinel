@@ -1,7 +1,7 @@
 /**
- * Phase-1 schema only (spec §"storage"): snapshots + summaries. The alerts,
- * recommendations and audit_log tables arrive with their phases — adding them
- * now would be schema we can't yet test against real usage.
+ * Schema through Phase 3: snapshots, summaries, alerts, conversations,
+ * recommendations. `audit_log` arrives with Phase 4 trading, and only then —
+ * it has no meaning until something can act.
  *
  * Conventions:
  * - Money: integer minor-units column + ISO currency column, mirroring the
@@ -51,4 +51,45 @@ CREATE TABLE IF NOT EXISTS summaries (
 );
 CREATE INDEX IF NOT EXISTS idx_summaries_sent_at
   ON summaries (sent_at);
+
+CREATE TABLE IF NOT EXISTS alerts (
+  id              INTEGER PRIMARY KEY,
+  fired_at        TEXT    NOT NULL,
+  rule_id         TEXT    NOT NULL,
+  subject         TEXT    NOT NULL,
+  change_percent  REAL    NOT NULL,
+  tier_percent    REAL    NOT NULL,
+  text            TEXT    NOT NULL,
+  source          TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_fired_at
+  ON alerts (fired_at);
+
+CREATE TABLE IF NOT EXISTS conversations (
+  id    INTEGER PRIMARY KEY,
+  at    TEXT NOT NULL,
+  role  TEXT NOT NULL,
+  text  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_at
+  ON conversations (at);
+
+-- One row per recommendation; the score_* columns are filled in later by the
+-- scoring job. NULL means "not yet scored at that horizon", which is what
+-- getRecommendationsDueForScoring selects on.
+CREATE TABLE IF NOT EXISTS recommendations (
+  id          INTEGER PRIMARY KEY,
+  made_at     TEXT    NOT NULL,
+  symbol      TEXT    NOT NULL,
+  direction   TEXT    NOT NULL,
+  rationale   TEXT    NOT NULL,
+  price_cents INTEGER NOT NULL,
+  currency    TEXT    NOT NULL,
+  source      TEXT    NOT NULL,
+  score_1d    REAL,
+  score_7d    REAL,
+  score_30d   REAL
+);
+CREATE INDEX IF NOT EXISTS idx_recommendations_made_at
+  ON recommendations (made_at);
 `;

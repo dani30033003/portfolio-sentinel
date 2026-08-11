@@ -2,13 +2,33 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 import { StorageError } from '../../domain/errors.js';
+import type { Alert, AlertRuleId } from '../../domain/entities/alert.js';
 import type {
+  Recommendation,
+  RecommendationDirection,
+  RecommendationSource,
+  ScoreHorizon,
+  StoredRecommendation,
+} from '../../domain/entities/recommendation.js';
+import { SCORE_HORIZON_DAYS } from '../../domain/entities/recommendation.js';
+import type {
+  ConversationTurn,
   PortfolioSnapshot,
   StoragePort,
+  StorageStats,
   StoredSummary,
   SummaryKind,
 } from '../../domain/ports/storage-port.js';
 import { SCHEMA_SQL } from './schema.js';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Horizon → column name. A fixed map, so no caller-supplied SQL identifier. */
+const SCORE_COLUMNS: Record<ScoreHorizon, string> = {
+  '1d': 'score_1d',
+  '7d': 'score_7d',
+  '30d': 'score_30d',
+};
 
 interface AccountRow {
   id: number;
@@ -37,6 +57,54 @@ interface SummaryRow {
   kind: string;
   text: string;
   positions_json: string | null;
+}
+
+interface AlertRow {
+  fired_at: string;
+  rule_id: string;
+  subject: string;
+  change_percent: number;
+  tier_percent: number;
+  text: string;
+  source: string;
+}
+
+interface ConversationRow {
+  at: string;
+  role: string;
+  text: string;
+}
+
+interface RecommendationRow {
+  id: number;
+  made_at: string;
+  symbol: string;
+  direction: string;
+  rationale: string;
+  price_cents: number;
+  currency: string;
+  source: string;
+  score_1d: number | null;
+  score_7d: number | null;
+  score_30d: number | null;
+}
+
+function toStoredRecommendation(row: RecommendationRow): StoredRecommendation {
+  const scores: Partial<Record<ScoreHorizon, number>> = {};
+  if (row.score_1d !== null) scores['1d'] = row.score_1d;
+  if (row.score_7d !== null) scores['7d'] = row.score_7d;
+  if (row.score_30d !== null) scores['30d'] = row.score_30d;
+  return {
+    id: row.id,
+    madeAt: new Date(row.made_at),
+    symbol: row.symbol,
+    direction: row.direction as RecommendationDirection,
+    rationale: row.rationale,
+    priceCents: row.price_cents,
+    currency: row.currency,
+    source: row.source as RecommendationSource,
+    scores,
+  };
 }
 
 /**
@@ -179,6 +247,154 @@ export class SqliteStorageAdapter implements StoragePort {
         text: row.text,
         ...(row.positions_json !== null ? { positionsJson: row.positions_json } : {}),
       }));
+    });
+  }
+
+  saveAlert(alert: Alert): Promise<void> {
+    return this.run(() => {
+      this.db
+        .prepare(
+          'INSERT INTO alerts (fired_at, rule_id, subject, change_percent, tier_percent, ' +
+            'text, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(
+          alert.firedAt.toISOString(),
+          alert.ruleId,
+          alert.subject,
+          alert.changePercent,
+          alert.tierPercent,
+          alert.text,
+          alert.source,
+        );
+    });
+  }
+
+  getRecentAlerts(limit: number): Promise<Alert[]> {
+    return this.run(() => {
+      const rows = this.db
+        .prepare('SELECT * FROM alerts ORDER BY fired_at DESC, id DESC LIMIT ?')
+        .all(limit) as AlertRow[];
+      return rows.map((row) => ({
+        firedAt: new Date(row.fired_at),
+        ruleId: row.rule_id as AlertRuleId,
+        subject: row.subject,
+        changePercent: row.change_percent,
+        tierPercent: row.tier_percent,
+        text: row.text,
+        source: row.source as Alert['source'],
+      }));
+    });
+  }
+
+  countAlertsSince(since: Date): Promise<number> {
+    return this.run(() => {
+      const row = this.db
+        .prepare('SELECT COUNT(*) AS count FROM alerts WHERE fired_at >= ?')
+        .get(since.toISOString()) as { count: number };
+      return row.count;
+    });
+  }
+
+  appendConversationTurn(turn: ConversationTurn): Promise<void> {
+    return this.run(() => {
+      this.db
+        .prepare('INSERT INTO conversations (at, role, text) VALUES (?, ?, ?)')
+        .run(turn.at.toISOString(), turn.role, turn.text);
+    });
+  }
+
+  getRecentConversation(limit: number): Promise<ConversationTurn[]> {
+    return this.run(() => {
+      // Take the newest N, then flip to chronological order: an LLM needs the
+      // transcript oldest-first, but "recent" has to be selected newest-first.
+      const rows = this.db
+        .prepare('SELECT at, role, text FROM conversations ORDER BY at DESC, id DESC LIMIT ?')
+        .all(limit) as ConversationRow[];
+      return rows.reverse().map((row) => ({
+        at: new Date(row.at),
+        role: row.role as ConversationTurn['role'],
+        text: row.text,
+      }));
+    });
+  }
+
+  saveRecommendation(recommendation: Recommendation): Promise<number> {
+    return this.run(() => {
+      const result = this.db
+        .prepare(
+          'INSERT INTO recommendations (made_at, symbol, direction, rationale, price_cents, ' +
+            'currency, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(
+          recommendation.madeAt.toISOString(),
+          recommendation.symbol,
+          recommendation.direction,
+          recommendation.rationale,
+          recommendation.priceCents,
+          recommendation.currency,
+          recommendation.source,
+        );
+      return Number(result.lastInsertRowid);
+    });
+  }
+
+  getRecentRecommendations(limit: number): Promise<StoredRecommendation[]> {
+    return this.run(() => {
+      const rows = this.db
+        .prepare('SELECT * FROM recommendations ORDER BY made_at DESC, id DESC LIMIT ?')
+        .all(limit) as RecommendationRow[];
+      return rows.map(toStoredRecommendation);
+    });
+  }
+
+  getRecommendationsDueForScoring(
+    horizon: ScoreHorizon,
+    asOf: Date,
+  ): Promise<StoredRecommendation[]> {
+    return this.run(() => {
+      // The column is chosen from a fixed map, never interpolated from input —
+      // SQLite cannot parameterize identifiers, so this is the safe equivalent.
+      const column = SCORE_COLUMNS[horizon];
+      const cutoff = new Date(asOf.getTime() - SCORE_HORIZON_DAYS[horizon] * DAY_MS);
+      const rows = this.db
+        .prepare(
+          `SELECT * FROM recommendations WHERE ${column} IS NULL AND made_at <= ? ` +
+            'ORDER BY made_at ASC',
+        )
+        .all(cutoff.toISOString()) as RecommendationRow[];
+      return rows.map(toStoredRecommendation);
+    });
+  }
+
+  recordRecommendationScore(
+    id: number,
+    horizon: ScoreHorizon,
+    changePercent: number,
+  ): Promise<void> {
+    return this.run(() => {
+      const column = SCORE_COLUMNS[horizon];
+      this.db
+        .prepare(`UPDATE recommendations SET ${column} = ? WHERE id = ?`)
+        .run(changePercent, id);
+    });
+  }
+
+  getStats(): Promise<StorageStats> {
+    return this.run(() => {
+      const count = (table: string): number =>
+        (this.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number })
+          .count;
+      // No fs.stat: the file on disk lags WAL content, and :memory: has no
+      // file at all. page_count × page_size is what SQLite itself believes.
+      const pageCount = this.db.pragma('page_count', { simple: true }) as number;
+      const pageSize = this.db.pragma('page_size', { simple: true }) as number;
+      return {
+        snapshotCount: count('account_snapshots'),
+        summaryCount: count('summaries'),
+        alertCount: count('alerts'),
+        recommendationCount: count('recommendations'),
+        sizeBytes: pageCount * pageSize,
+      };
     });
   }
 
