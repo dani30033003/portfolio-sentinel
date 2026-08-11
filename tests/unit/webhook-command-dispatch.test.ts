@@ -50,12 +50,15 @@ describe('POST /webhook (command dispatch)', () => {
     expect(onCommand).toHaveBeenCalledWith(OWNER, { command: 'status' });
   });
 
-  it('dispatches an unrecognized command as { command: "unknown" }', async () => {
+  it('dispatches free text as a question for the LLM, not as a command', async () => {
     const onCommand: OnCommandMock = vi.fn();
-    const res = await post(build(onCommand), messageBody(OWNER, 'gibberish'));
+    const res = await post(build(onCommand), messageBody(OWNER, 'how is NVDA doing?'));
 
     expect(res.statusCode).toBe(200);
-    expect(onCommand).toHaveBeenCalledWith(OWNER, { command: 'unknown' });
+    expect(onCommand).toHaveBeenCalledWith(OWNER, {
+      command: 'question',
+      text: 'how is NVDA doing?',
+    });
   });
 
   it('never dispatches for a non-whitelisted sender, even with recognized text', async () => {

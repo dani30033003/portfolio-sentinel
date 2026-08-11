@@ -30,7 +30,11 @@ export function buildSummaryPrompt(input: SummaryPromptInput): Prompt {
     '- Your output is analysis and considerations, not financial advice. Do not present ' +
     'recommendations as certainties; state reasoning and confidence.\n' +
     '- Keep it compact: it must fit in one or two WhatsApp messages (about 1000 characters ' +
-    'each). Plain text only, no markdown.' +
+    'each). Plain text only, no markdown.\n' +
+    '- If one holding genuinely warrants attention, you may add a final line in exactly ' +
+    'this format so it can be tracked and scored later:\n' +
+    '  REC: <SYMBOL> | <buy|sell|trim|add|hold|watch> | <one-line reason>\n' +
+    '  At most one REC line, and only when you mean it. Omit it on an ordinary day.' +
     profileSection;
 
   const user =
