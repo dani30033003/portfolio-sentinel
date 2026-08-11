@@ -1,4 +1,5 @@
 import type { PhoneNumber } from '../domain/ports/messaging-port.js';
+import type { PriceLevel } from '../domain/services/watchdog-rules.js';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -12,9 +13,33 @@ export type LlmConfig =
   | { provider: 'gemini'; apiKey: string; model: string; timeoutMs: number }
   | { provider: 'none' };
 
+export interface WatchdogTunables {
+  pollIntervalMs: number;
+  positionDropTiers: number[];
+  positionWindowMs: number;
+  portfolioDropTiers: number[];
+  cooldownMs: number;
+  dailyCap: number;
+  levels: PriceLevel[];
+}
+
+export interface SimulatorTunables {
+  seed: number;
+  tickMs: number;
+  volatility: number;
+}
+
 export interface AppConfig {
   /** IANA timezone for user-facing timestamps. Storage stays UTC. */
   timeZone: string;
+  /** Cron expressions for scheduled summaries, evaluated in `timeZone`. */
+  summarySchedules: string[];
+  /** Cron expression for the nightly recommendation scoring job. */
+  scoringSchedule: string;
+  watchdog: WatchdogTunables;
+  simulator: SimulatorTunables;
+  /** Strategy notes injected into every LLM system prompt. */
+  userProfile?: string;
   /** Absent → dry-run mode: messages print to the console. */
   whatsapp?: { token: string; phoneNumberId: string; to: PhoneNumber };
   /** Absent → the webhook entry point refuses to start. Independent of `whatsapp`. */
@@ -30,6 +55,9 @@ const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 const DEFAULT_LLM_TIMEOUT_MS = 30_000;
 const DEFAULT_WEBHOOK_PORT = 3000;
 const DEFAULT_DB_PATH = './data/portfolio-sentinel.db';
+// 09:00 and 22:00 in the configured timezone (spec §1 goal 1).
+const DEFAULT_SUMMARY_SCHEDULES = ['0 9 * * *', '0 22 * * *'];
+const DEFAULT_SCORING_SCHEDULE = '30 2 * * *';
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const timeZone = env.USER_TIMEZONE ?? 'Asia/Jerusalem';
@@ -51,14 +79,92 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const webhook = loadWebhookConfig(env);
   const llm = loadLlmConfig(env);
   const dbPath = env.DB_PATH ?? DEFAULT_DB_PATH;
+  const userProfile = env.USER_PROFILE?.trim();
 
   return {
     timeZone,
+    summarySchedules: splitList(env.SUMMARY_SCHEDULE) ?? DEFAULT_SUMMARY_SCHEDULES,
+    scoringSchedule: env.SCORING_SCHEDULE ?? DEFAULT_SCORING_SCHEDULE,
+    watchdog: loadWatchdogConfig(env),
+    simulator: {
+      seed: positiveNumber(env, 'SIM_SEED', 1),
+      tickMs: positiveNumber(env, 'SIM_TICK_MS', 5_000),
+      volatility: positiveNumber(env, 'SIM_VOLATILITY', 0.004),
+    },
     llm,
     dbPath,
+    ...(userProfile ? { userProfile } : {}),
     ...(whatsapp ? { whatsapp } : {}),
     ...(webhook ? { webhook } : {}),
   };
+}
+
+/**
+ * Watchdog thresholds live in env rather than the config.yaml the spec sketches:
+ * every other knob in this app is already an env var, and adding a YAML parser
+ * to hold six numbers would buy nothing. If the rule set grows structure
+ * (per-symbol overrides, schedules), that trade flips.
+ */
+function loadWatchdogConfig(env: NodeJS.ProcessEnv): WatchdogTunables {
+  return {
+    pollIntervalMs: positiveNumber(env, 'POLL_INTERVAL_MS', 60_000),
+    positionDropTiers: numberList(env, 'WATCHDOG_POSITION_TIERS', [4, 7, 10]),
+    positionWindowMs: positiveNumber(env, 'WATCHDOG_WINDOW_MS', 30 * 60_000),
+    portfolioDropTiers: numberList(env, 'WATCHDOG_PORTFOLIO_TIERS', [2, 4, 6]),
+    cooldownMs: positiveNumber(env, 'ALERT_COOLDOWN_MS', 2 * 60 * 60_000),
+    dailyCap: positiveNumber(env, 'ALERT_DAILY_CAP', 10),
+    levels: parseLevels(env.WATCHDOG_LEVELS),
+  };
+}
+
+/** `NVDA:below:100000,AAPL:above:25000` — symbol, side, price in integer cents. */
+function parseLevels(raw?: string): PriceLevel[] {
+  const entries = splitList(raw);
+  if (!entries) return [];
+
+  return entries.map((entry) => {
+    const [symbol, direction, priceCents] = entry.split(':');
+    if (
+      !symbol ||
+      (direction !== 'above' && direction !== 'below') ||
+      !Number.isSafeInteger(Number(priceCents))
+    ) {
+      throw new ConfigError(
+        `Bad WATCHDOG_LEVELS entry "${entry}" — expected SYMBOL:above|below:PRICE_IN_CENTS`,
+      );
+    }
+    return { symbol: symbol.toUpperCase(), direction, priceCents: Number(priceCents) };
+  });
+}
+
+function splitList(raw?: string): string[] | undefined {
+  if (!raw?.trim()) return undefined;
+  return raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part !== '');
+}
+
+function numberList(env: NodeJS.ProcessEnv, key: string, fallback: number[]): number[] {
+  const parts = splitList(env[key]);
+  if (!parts) return fallback;
+
+  const values = parts.map(Number);
+  if (values.some((value) => !Number.isFinite(value) || value <= 0)) {
+    throw new ConfigError(`${key} must be a comma-separated list of positive numbers.`);
+  }
+  return values;
+}
+
+function positiveNumber(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
+  const raw = env[key];
+  if (raw === undefined || raw.trim() === '') return fallback;
+
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new ConfigError(`${key} must be a positive number, got "${raw}"`);
+  }
+  return value;
 }
 
 /**

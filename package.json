@@ -9,19 +9,23 @@
   },
   "scripts": {
     "dev": "tsx src/app/main.ts",
-    "summary": "tsx src/app/main.ts",
-    "webhook": "tsx src/app/webhook-main.ts",
+    "summary": "tsx src/app/summary-once.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
-    "test:contract": "vitest run tests/contract"
+    "test:contract": "vitest run tests/contract",
+    "start": "tsx src/app/main.ts",
+    "mcp": "tsx src/mcp/server.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^12.11.1",
     "fastify": "^5.10.0",
-    "pino": "^10.3.1"
+    "node-cron": "^4.6.0",
+    "pino": "^10.3.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

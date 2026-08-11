@@ -1,87 +1,169 @@
 /**
- * Composition root — the only place where concrete adapters meet domain services.
- * Phase 1 (in progress): build one summary — LLM-written if a provider is
- * configured, deterministic numeric snapshot otherwise or on any LLM failure —
- * and send it (WhatsApp if configured, console otherwise).
+ * The sentinel process: scheduled summaries, a continuous watchdog poll loop,
+ * inbound commands, and the nightly recommendation scoring job — one process,
+ * one composition root (see wiring.ts).
+ *
+ * It degrades instead of refusing to start. No WhatsApp credentials means
+ * messages print to the console; no LLM key means deterministic numeric text;
+ * no webhook config means the console driver is the only inbound channel.
+ * The point is that the whole system can be run and watched with no secrets.
  */
-import { pino } from 'pino';
-import { loadConfig } from './config.js';
-import type { LLMPort } from '../domain/ports/llm-port.js';
-import { SummaryService, type LlmSummaryConfig } from '../domain/services/summary-service.js';
-import { PaperBrokerAdapter } from '../adapters/broker-paper/paper-broker-adapter.js';
-import { SystemClock } from '../adapters/clock-system/system-clock.js';
-import { ConsoleMessagingAdapter } from '../adapters/messaging-console/console-messaging-adapter.js';
-import { WhatsAppAdapter } from '../adapters/messaging-whatsapp/whatsapp-adapter.js';
-import { AnthropicAdapter } from '../adapters/llm-anthropic/anthropic-adapter.js';
-import { GeminiAdapter } from '../adapters/llm-gemini/gemini-adapter.js';
-import { SqliteStorageAdapter } from '../adapters/storage-sqlite/sqlite-storage-adapter.js';
+import cron from 'node-cron';
+import { buildContainer, loadEnvFile } from './wiring.js';
+import { createCommandHandler } from './command-handler.js';
+import { startConsoleDriver } from './console-driver.js';
+import { buildWebhookServer } from '../webhook/server.js';
+import type { Command } from '../webhook/command-parser.js';
 
-// Node 22+ loads .env natively — no dotenv dependency needed.
-try {
-  process.loadEnvFile();
-} catch {
-  // no .env file: fine, config falls back to console dry-run mode
+loadEnvFile();
+
+const container = buildContainer('portfolio-sentinel');
+const { config, logger } = container;
+const handleCommand = createCommandHandler(container);
+
+/** Runs one watchdog cycle and logs what it did. Never throws. */
+async function poll(): Promise<void> {
+  try {
+    const result = await container.watchdog.poll();
+    if (result.sent.length > 0 || result.suppressed.length > 0 || result.errors.length > 0) {
+      logger.info(
+        {
+          component: 'watchdog',
+          triggers: result.triggers.length,
+          sent: result.sent.map((alert) => `${alert.ruleId}:${alert.subject}`),
+          suppressed: result.suppressed.map((s) => `${s.trigger.ruleId}:${s.reason}`),
+          errors: result.errors,
+        },
+        'watchdog poll',
+      );
+    }
+  } catch (error) {
+    logger.error({ component: 'watchdog', err: describe(error) }, 'watchdog poll failed');
+  }
 }
 
-const logger = pino({ name: 'portfolio-sentinel' });
-const config = loadConfig();
-
-const broker = new PaperBrokerAdapter();
-const clock = new SystemClock();
-const messaging = config.whatsapp
-  ? new WhatsAppAdapter(config.whatsapp)
-  : new ConsoleMessagingAdapter();
-const recipient = config.whatsapp?.to ?? 'console';
-
-let llm: LLMPort | undefined;
-if (config.llm.provider === 'anthropic') {
-  llm = new AnthropicAdapter(config.llm);
-} else if (config.llm.provider === 'gemini') {
-  llm = new GeminiAdapter(config.llm);
+/**
+ * Self-scheduling timeout rather than setInterval: a poll that takes longer
+ * than the interval (a slow LLM alert) must not have the next one start on top
+ * of it. The next tick is scheduled only after this one finishes.
+ */
+let pollTimer: NodeJS.Timeout | undefined;
+function scheduleNextPoll(): void {
+  pollTimer = setTimeout(() => {
+    void poll().finally(scheduleNextPoll);
+  }, config.watchdog.pollIntervalMs);
 }
-const llmSummaryConfig: LlmSummaryConfig | undefined =
-  llm && config.llm.provider !== 'none'
-    ? { llm, timeoutMs: config.llm.timeoutMs }
+
+async function sendScheduledSummary(): Promise<void> {
+  try {
+    const result = await container.summaries.buildSummary('scheduled');
+    await container.messaging.sendMessage(container.recipient, result.text);
+    container.state.recordSummary(container.clock.now());
+    logger.info(
+      {
+        component: 'scheduler',
+        summarySource: result.source,
+        ...(result.llmError ? { llmError: result.llmError } : {}),
+        ...(result.storageError ? { storageError: result.storageError } : {}),
+      },
+      'scheduled summary sent',
+    );
+  } catch (error) {
+    logger.error({ component: 'scheduler', err: describe(error) }, 'scheduled summary failed');
+  }
+}
+
+const cronTasks = [
+  ...config.summarySchedules.map((expression) =>
+    cron.schedule(expression, () => void sendScheduledSummary(), { timezone: config.timeZone }),
+  ),
+  cron.schedule(
+    config.scoringSchedule,
+    () => {
+      void container.recommendations
+        .scoreDue(container.broker, container.clock.now())
+        .then((result) => {
+          if (result.scored > 0 || result.errors.length > 0) {
+            logger.info({ component: 'scoring', ...result }, 'recommendation scoring run');
+          }
+        });
+    },
+    { timezone: config.timeZone },
+  ),
+];
+
+// The webhook only starts when it can both authenticate inbound POSTs and
+// reply — a half-configured webhook is a security hole, not a degraded mode.
+const webhookServer =
+  config.webhook && config.whatsapp
+    ? buildWebhookServer({
+        verifyToken: config.webhook.verifyToken,
+        appSecret: config.webhook.appSecret,
+        senderWhitelist: [config.whatsapp.to],
+        logger,
+        onCommand: (sender: string, command: Command) => {
+          // Fire-and-forget: server.ts has already answered Meta with a 200,
+          // and handling can take as long as an LLM call.
+          void handleCommand(command)
+            .then((reply) => container.messaging.sendMessage(sender, reply))
+            .catch((error: unknown) => {
+              logger.error({ component: 'webhook', err: describe(error) }, 'command failed');
+            });
+        },
+      })
     : undefined;
 
-const storage = new SqliteStorageAdapter(config.dbPath);
-const summaryService = new SummaryService(
-  broker,
-  clock,
-  config.timeZone,
-  llmSummaryConfig,
-  storage,
+let stopConsole: (() => void) | undefined = undefined;
+let shuttingDown = false;
+
+function shutdown(signal: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ component: 'app', signal }, 'shutting down');
+
+  clearTimeout(pollTimer);
+  for (const task of cronTasks) void task.stop();
+  stopConsole?.();
+
+  void Promise.resolve(webhookServer?.close()).finally(() => {
+    container.close();
+    process.exit(0);
+  });
+}
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => shutdown(signal));
+}
+
+if (webhookServer) {
+  await webhookServer.listen({ port: config.webhook?.port ?? 3000, host: '0.0.0.0' });
+  logger.info({ component: 'webhook', port: config.webhook?.port }, 'webhook listening');
+}
+
+// First poll immediately, so the price history starts filling and STATUS has
+// something true to report before the first interval elapses.
+await poll();
+scheduleNextPoll();
+
+logger.info(
+  {
+    component: 'app',
+    transport: config.whatsapp ? 'whatsapp' : 'console',
+    llmProvider: config.llm.provider,
+    pollIntervalMs: config.watchdog.pollIntervalMs,
+    summarySchedules: config.summarySchedules,
+    inbound: webhookServer ? 'webhook + console' : 'console',
+  },
+  'portfolio sentinel started',
 );
 
-try {
-  const result = await summaryService.buildSummary('scheduled');
-  await messaging.sendMessage(recipient, result.text);
-  if (result.llmError) {
-    logger.warn(
-      { component: 'app', llmProvider: config.llm.provider, err: result.llmError },
-      'LLM summary failed — sent numeric fallback',
-    );
-  }
-  if (result.storageError) {
-    logger.warn(
-      { component: 'app', err: result.storageError },
-      'summary sent but not persisted',
-    );
-  }
-  logger.info(
-    {
-      component: 'app',
-      transport: config.whatsapp ? 'whatsapp' : 'console',
-      summarySource: result.source,
-      llmProvider: config.llm.provider,
-      chars: result.text.length,
-    },
-    'summary sent',
-  );
-} catch (error) {
-  logger.error({ component: 'app', err: error }, 'summary failed');
-  process.exitCode = 1;
-} finally {
-  // Single-shot process: flush WAL and release the file before exiting.
-  storage.close();
+stopConsole = startConsoleDriver({
+  container,
+  handleCommand,
+  pollNow: poll,
+  onQuit: () => shutdown('console quit'),
+});
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
