@@ -1,11 +1,9 @@
 /**
- * ═══════════════════════════════ HUMAN-OWNED MODULE ═══════════════════════════════
- * Money math utilities — implemented by the human (CLAUDE.md learning protocol #3).
- * Claude scaffolds signatures and tests only; the bodies below are stubs.
+ * Money math. Amounts are integer cents paired with an ISO currency code, never
+ * floats — 0.1 + 0.2 is not 0.3 in binary floating point, and a portfolio that
+ * accumulates that error reports numbers that do not reconcile.
  *
- * The spec lives in tests/unit/money-math.test.ts. Remove `.skip` there and
- * implement here until the suite is green.
- * ═══════════════════════════════════════════════════════════════════════════════════
+ * The executable spec for this module is tests/unit/money-math.test.ts.
  */
 import type { CurrencyCode, Money } from './money.js';
 import { CurrencyMismatchError, InvalidMoneyError} from '../errors.js';
@@ -23,7 +21,7 @@ export function money(amountCents: number, currency: CurrencyCode): Money {
 
 /**
  * Sum two Money values of the same currency.
-* Throws CurrencyMismatchError if the currencies differ.
+ * Throws CurrencyMismatchError if the currencies differ.
  */
 export function addMoney(a: Money, b: Money): Money {
     if (a.currency !== b.currency) {
@@ -35,9 +33,9 @@ export function addMoney(a: Money, b: Money): Money {
 /**
  * Render Money for display, e.g. { 123456, "USD" } → "$1,234.56".
  * With { withSign: true }, positive amounts get a leading "+" (zero gets none).
- * Hint: Intl.NumberFormat('en-US', { style: 'currency', currency }) does the
- * heavy lifting — but it expects major units, and division brings floats back.
- * Think about where the integer→display conversion is allowed to happen.
+ *
+ * The division by 100 is the one place floats are allowed: it happens at the
+ * display boundary, on a value that is never read back into a calculation.
  */
 export function formatMoney(m: Money, opts?: { withSign?: boolean }): string {
   const formatted = Intl.NumberFormat('en-US', { style: 'currency', currency: m.currency }).format(m.amountCents / 100);

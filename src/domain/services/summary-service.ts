@@ -31,8 +31,8 @@ export interface SummaryResult {
   /**
    * Set when persistence was configured but failed. Like `llmError`, this is a
    * report, not a thrown error: storing the summary is secondary to sending it,
-   * so a storage failure never blocks the (already-built) text (CLAUDE.md hard
-   * rule 6 in spirit — the deliverable output never depends on a side channel).
+   * so a storage failure never blocks the (already-built) text. The deliverable
+   * output never depends on a side channel.
    */
   readonly storageError?: string;
   /** Present when the model attached a trackable REC line (stripped from `text`). */
@@ -57,8 +57,8 @@ export class SummaryService {
 
   /**
    * The summary to send: LLM-written when configured, but never dependent on
-   * it (CLAUDE.md hard rule 6) — any LLM failure or timeout falls back to the
-   * numeric snapshot, which is always computed first and always sendable. When
+   * it — any LLM failure or timeout falls back to the numeric snapshot, which
+   * is always computed first and always sendable. When
    * a StoragePort is configured, the snapshot and the summary are persisted
    * after the text is produced; a persistence failure is surfaced on the result
    * (`storageError`), never thrown, so it cannot block delivery.

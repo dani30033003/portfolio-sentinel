@@ -1,14 +1,10 @@
 /**
- * ═══════════════════════════ HUMAN-OWNED MODULE (written by Claude on request) ═══
- * The watchdog rules engine is a CLAUDE.md learning-protocol #3 module — normally
- * the human writes it. It was written here because the human asked for a complete
- * running POC. It is deliberately the most re-derivable file in the repo: pure
- * functions over numbers, no I/O, no clock, no LLM.
- * ═══════════════════════════════════════════════════════════════════════════════
+ * The watchdog rules engine: pure functions over numbers, no I/O, no clock, no LLM.
  *
- * Detection is deterministic (CLAUDE.md hard rule 5). Nothing in here knows that
- * an LLM exists; the LLM is only asked to write prose *after* one of these
- * functions has already decided that something happened.
+ * Detection is deterministic by design. Nothing in here knows that an LLM exists;
+ * the LLM is only asked to write prose *after* one of these functions has already
+ * decided that something happened. That split is what makes every trigger in this
+ * file unit-testable without mocking a model.
  */
 import type { AccountSummary } from '../entities/account-summary.js';
 import type { AlertTrigger } from '../entities/alert.js';

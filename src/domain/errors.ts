@@ -1,5 +1,5 @@
 /**
- * Base class for all typed domain errors (CLAUDE.md: never throw raw strings).
+ * Base class for all typed domain errors; raw strings are never thrown.
  * Adapters translate SDK/transport errors into these at the boundary.
  */
 export class DomainError extends Error {
@@ -25,5 +25,5 @@ export class TimeoutError extends DomainError {}
 /** Thrown by storage adapters when a read or write fails (disk, corruption...). */
 export class StorageError extends DomainError {}
 
-/** Placeholder thrown by human-owned module stubs that are not implemented yet. */
+/** Thrown by a stub that has a signature and tests but no implementation yet. */
 export class NotImplementedError extends DomainError {}

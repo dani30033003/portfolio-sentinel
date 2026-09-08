@@ -10,7 +10,7 @@ export interface AlertPromptInput {
 
 /**
  * Prompt for the post-trigger alert writer. The rule already decided that
- * something happened (CLAUDE.md hard rule 5) — the model's only job is to say
+ * something happened, deterministically — the model's only job is to say
  * it in a sentence or two. It is never asked whether to alert.
  */
 export function buildAlertPrompt(input: AlertPromptInput): Prompt {

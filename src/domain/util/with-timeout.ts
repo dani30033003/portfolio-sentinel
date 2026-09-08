@@ -1,10 +1,10 @@
 import { TimeoutError } from '../errors.js';
 
 /**
- * Race a promise against a deadline. Enforces CLAUDE.md hard rule 6: anything
- * optional (like an LLM call) must be bounded so the numeric fallback can go
- * out instead. The timer is always cleared so a fast win doesn't leave a
- * dangling timeout keeping the process alive.
+ * Race a promise against a deadline. Anything optional (an LLM call, say) has
+ * to be bounded, so that a hung model lets the numeric fallback go out instead
+ * of stalling the message entirely. The timer is always cleared so a fast win
+ * doesn't leave a dangling timeout keeping the process alive.
  */
 export async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;

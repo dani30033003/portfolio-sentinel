@@ -1,10 +1,8 @@
 /**
- * ═══════════════════════════ HUMAN-OWNED MODULE (written by Claude on request) ═══
  * Alert hygiene: whether a trigger that really happened should actually reach the
  * phone. Kept separate from watchdog-rules.ts because these are different
  * questions — "did the market move?" versus "have I already said so?" — and
  * mixing them makes both harder to test.
- * ═══════════════════════════════════════════════════════════════════════════════
  */
 import type { AlertTrigger } from '../entities/alert.js';
 

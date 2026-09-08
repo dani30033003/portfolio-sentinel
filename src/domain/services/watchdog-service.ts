@@ -49,9 +49,9 @@ const DEFAULT_GATEWAY_DOWN_AFTER_MS = 10 * 60 * 1000;
  * The continuous half of the system: poll prices, run the deterministic rules,
  * and message the user about what survives the alert policy.
  *
- * Alert delivery never depends on the LLM (CLAUDE.md hard rule 6). The numeric
- * text is built first and is always sendable; the LLM only ever replaces it,
- * under a timeout, and any failure falls back to the numbers.
+ * Alert delivery never depends on the LLM. The numeric text is built first and
+ * is always sendable; the LLM only ever replaces it, under a timeout, and any
+ * failure falls back to the numbers.
  */
 export class WatchdogService {
   private readonly rules: WatchdogConfig;

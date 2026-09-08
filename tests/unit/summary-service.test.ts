@@ -61,7 +61,7 @@ describe('SummaryService.buildSnapshotSummary', () => {
   });
 });
 
-describe('SummaryService.buildSummary — LLM path and fallback (hard rule 6)', () => {
+describe('SummaryService.buildSummary — LLM path and fallback', () => {
   const llmOf = (complete: LLMPort['complete']): LLMPort => ({ complete });
 
   it('returns the snapshot when no LLM is configured', async () => {

@@ -1,6 +1,6 @@
 /**
- * Typed prompt template for the LLM-written portfolio summary (CLAUDE.md style:
- * prompts live here as functions with unit tests asserting required elements).
+ * Typed prompt template for the LLM-written portfolio summary. Prompts live in
+ * this directory as functions so their required elements can be unit-tested.
  * The LLM only rewrites data we computed — it never decides what the numbers are.
  */
 export interface SummaryPromptInput {

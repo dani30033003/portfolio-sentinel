@@ -1,14 +1,9 @@
 /**
- * ═══════════════════════════ HUMAN-OWNED MODULE ═══════════════════════════
- * The command parser is a CLAUDE.md learning-protocol #3 module. The human
- * wrote the STATUS/SUMMARY version; the remaining commands were added by
- * Claude when the human asked for a complete POC.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * Exact-match classification in code, before the LLM sees anything (hard rule
- * 7). Everything that is not a known command becomes a `question` — carrying
- * the raw text, which downstream must treat as untrusted user-role content and
- * never as instructions.
+ * Exact-match command classification, done in code before the LLM sees anything.
+ * Inbound messages are untrusted, so what counts as a command is decided by a
+ * lookup here rather than by a model. Everything that is not a known command
+ * becomes a `question` — carrying the raw text, which downstream must treat as
+ * untrusted user-role content and never as instructions.
  */
 export type Command =
   | { command: 'status' }

@@ -1,11 +1,6 @@
 /**
- * ═══════════════════════════════ HUMAN-OWNED MODULE ═══════════════════════════════
- * This suite is the executable spec for src/domain/entities/money-math.ts.
- *
- * Your task: change each `describe.skip` below to `describe`, run `npm test`,
- * and implement money-math.ts until everything is green. Do the same for
- * tests/unit/summary-service.test.ts, which depends on these utilities.
- * ═══════════════════════════════════════════════════════════════════════════════════
+ * The executable spec for src/domain/entities/money-math.ts: construction and
+ * currency-mismatch rules, display formatting, and percent change.
  */
 import { describe, expect, it } from 'vitest';
 import { addMoney, formatMoney, money, percentChange } from '../../src/domain/entities/money-math.js';
